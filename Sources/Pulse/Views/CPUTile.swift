@@ -32,7 +32,7 @@ struct CPUTile: View {
                 ],
                 scale: 1
             )
-            .frame(height: 52)
+            .frame(height: 46)
 
             HStack(alignment: .bottom, spacing: 14) {
                 if efficiencyCount > 0 {

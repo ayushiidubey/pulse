@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 nonisolated struct NetTopEntry: Sendable {
@@ -12,13 +11,9 @@ nonisolated struct NetTopEntry: Sendable {
 /// Runs only while the panel is open; create a fresh stream for each session.
 nonisolated final class NetTopStream: @unchecked Sendable {
     private let onSample: @Sendable ([NetTopEntry]) -> Void
-    private let queue = DispatchQueue(label: "pulse.nettop")
-    private let lock = NSLock()
-    private var process: Process?
-    private var source: (any DispatchSourceRead)?
+    private var terminal: TerminalProcess?
 
-    // Parser state, touched only on `queue`.
-    private var pending: [UInt8] = []
+    // Parser state, touched only from the terminal's serial output handler.
     private var block: [NetTopEntry] = []
     private var blocksSeen = 0
 
@@ -27,76 +22,28 @@ nonisolated final class NetTopStream: @unchecked Sendable {
     }
 
     func start() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard process == nil else { return }
-
-        // nettop block-buffers into a pipe and only flushes each sample when writing to a terminal.
-        var primary: Int32 = -1, replica: Int32 = -1
-        var size = winsize(ws_row: 500, ws_col: 1024, ws_xpixel: 0, ws_ypixel: 0)
-        guard openpty(&primary, &replica, nil, nil, &size) == 0 else { return }
-
-        let terminal = FileHandle(fileDescriptor: replica, closeOnDealloc: true)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
-        // -P per process, -d per-interval deltas, -x exact numbers, -t external skips loopback, -L 0 runs until stopped.
-        process.arguments = ["-P", "-d", "-x", "-t", "external", "-s", "1", "-L", "0", "-J", "bytes_in,bytes_out"]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = terminal
-        process.standardError = FileHandle.nullDevice
-
-        // Read with a dispatch source rather than FileHandle: a pty read fails with EIO once nettop exits,
-        // and FileHandle turns that into an Objective-C exception.
-        let source = DispatchSource.makeReadSource(fileDescriptor: primary, queue: queue)
-        source.setEventHandler { [self] in
-            var buffer = [UInt8](repeating: 0, count: 16_384)
-            let count = read(primary, &buffer, buffer.count)
-            if count > 0 {
-                consume(buffer[0..<count])
-            } else {
-                self.source?.cancel()
+        guard terminal == nil else { return }
+        let terminal = TerminalProcess(
+            executable: "/usr/bin/nettop",
+            // -P per process, -d per-interval deltas, -x exact numbers, -t external skips loopback, -L 0 runs until stopped.
+            arguments: ["-P", "-d", "-x", "-t", "external", "-s", "1", "-L", "0", "-J", "bytes_in,bytes_out"],
+            onOutput: { [self] lines, endsAtLineBreak in
+                handle(lines, endsAtLineBreak: endsAtLineBreak)
             }
-        }
-        source.setCancelHandler {
-            close(primary)
-        }
-
-        do {
-            try process.run()
-            try? terminal.close()
-            source.resume()
-            self.process = process
-            self.source = source
-        } catch {
-            try? terminal.close()
-            close(primary)
-        }
+        )
+        terminal.start()
+        self.terminal = terminal
     }
 
     func stop() {
-        lock.lock()
-        defer { lock.unlock() }
-        source?.cancel()
-        source = nil
-        if let process, process.isRunning {
-            process.terminate()
-        }
-        process = nil
+        terminal?.stop()
+        terminal = nil
     }
 
-    private func consume(_ bytes: ArraySlice<UInt8>) {
-        pending.append(contentsOf: bytes)
-        var lineStart = 0
-        for index in pending.indices where pending[index] == UInt8(ascii: "\n") {
-            var lineEnd = index
-            if lineEnd > lineStart, pending[lineEnd - 1] == UInt8(ascii: "\r") { lineEnd -= 1 }
-            parse(String(decoding: pending[lineStart..<lineEnd], as: UTF8.self))
-            lineStart = index + 1
-        }
-        pending.removeFirst(lineStart)
-
+    private func handle(_ lines: [String], endsAtLineBreak: Bool) {
+        lines.forEach(parse)
         // The first block is cumulative since boot; only later blocks are per-second deltas.
-        if pending.isEmpty, blocksSeen >= 2 {
+        if endsAtLineBreak, blocksSeen >= 2 {
             onSample(block)
         }
     }

@@ -12,7 +12,7 @@ struct NetworkTile: View {
         let network = monitor.network
         let peak = max(network.downHistory.peak, network.upHistory.peak, 50_000)
 
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             TileHeader(title: Self.title(for: network), symbol: Self.symbol(for: network.connection), tint: .blue) {
                 if let wifi = network.wifi {
                     HStack(spacing: 5) {
@@ -39,8 +39,9 @@ struct NetworkTile: View {
                 ],
                 scale: peak * 1.15
             )
-            .frame(height: 56)
-            .overlay(alignment: .topTrailing) {
+            .frame(height: 50)
+            // Top leading: the newest samples, and so the most recent peaks, sit at the trailing edge.
+            .overlay(alignment: .topLeading) {
                 Text(Format.rate(peak))
                     .font(.system(size: 9, weight: .medium))
                     .monospacedDigit()
@@ -51,6 +52,8 @@ struct NetworkTile: View {
                 AddressField(title: "Local", address: network.localAddress, copiedAddress: $copiedAddress)
                 AddressField(title: "Public", address: network.publicAddress, copiedAddress: $copiedAddress)
             }
+
+            SpeedTestRow()
 
             Divider()
                 .opacity(0.6)
@@ -103,6 +106,98 @@ struct NetworkTile: View {
         case .other: "network"
         case .offline: "wifi.slash"
         }
+    }
+}
+
+private struct SpeedTestRow: View {
+    @Environment(SystemMonitor.self) private var monitor
+
+    var body: some View {
+        let isRunning = monitor.speedTestProgress != nil
+
+        HStack(spacing: 8) {
+            Button {
+                if isRunning {
+                    monitor.cancelSpeedTest()
+                } else {
+                    monitor.startSpeedTest()
+                }
+            } label: {
+                if isRunning {
+                    Label("Stop", systemImage: "stop.fill")
+                } else {
+                    Label(monitor.speedTestResult == nil ? "Speed Test" : "Test Again", systemImage: "gauge.with.needle")
+                }
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .disabled(monitor.network.connection == .offline)
+            .help("Measure download and upload speed with Apple's networkQuality")
+
+            Spacer(minLength: 4)
+
+            if let progress = monitor.speedTestProgress {
+                ProgressView()
+                    .controlSize(.mini)
+                SpeedFigure(symbol: "arrow.down", mbps: progress.downloadMbps, tint: .blue)
+                SpeedFigure(symbol: "arrow.up", mbps: progress.uploadMbps, tint: .pink)
+            } else if monitor.speedTestFailed {
+                Text("Couldn't finish the test")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else if let result = monitor.speedTestResult {
+                SpeedFigure(symbol: "arrow.down", mbps: result.downloadMbps, tint: .blue)
+                SpeedFigure(symbol: "arrow.up", mbps: result.uploadMbps, tint: .pink)
+                if let rating = result.responsivenessRating {
+                    Chip(text: rating, color: Self.color(forRating: rating))
+                        .help(Self.details(for: result))
+                }
+            } else {
+                Text("Tests against Apple's servers")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(height: 26)
+    }
+
+    private static func color(forRating rating: String) -> Color {
+        switch rating.lowercased() {
+        case "high": .green
+        case "medium": .yellow
+        default: .orange
+        }
+    }
+
+    private static func details(for result: SpeedTestResult) -> String {
+        var parts = ["Responsiveness"]
+        if let rpm = result.responsivenessRPM { parts.append("\(Int(rpm.rounded())) RPM") }
+        if let latency = result.idleLatencyMilliseconds { parts.append("idle latency \(Int(latency.rounded())) ms") }
+        parts.append("tested \(result.date.formatted(.relative(presentation: .named)))")
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct SpeedFigure: View {
+    let symbol: String
+    let mbps: Double
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 3) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tint)
+            Text(Format.megabits(mbps))
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: mbps))
+            Text("Mbps")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .animation(.snappy(duration: 0.25), value: mbps)
+        .fixedSize()
     }
 }
 

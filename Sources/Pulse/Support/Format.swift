@@ -23,6 +23,11 @@ enum Format {
         "\(bytes(bytesPerSecond).text)/s"
     }
 
+    /// "112", "48.6", "3.25": about three significant figures.
+    static func megabits(_ mbps: Double) -> String {
+        String(format: mbps >= 100 ? "%.0f" : mbps >= 10 ? "%.1f" : "%.2f", max(mbps, 0))
+    }
+
     static func percent(_ fraction: Double) -> String {
         "\(Int((min(max(fraction, 0), 1) * 100).rounded()))"
     }

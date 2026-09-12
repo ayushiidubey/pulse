@@ -55,6 +55,11 @@ final class SystemMonitor {
     private(set) var hasTrafficSample = false
     private(set) var isPanelVisible = false
 
+    /// Live figures while a speed test runs; nil otherwise.
+    private(set) var speedTestProgress: SpeedTestProgress?
+    private(set) var speedTestResult: SpeedTestResult?
+    private(set) var speedTestFailed = false
+
     let info = SystemInfo.current
     var efficiencyCoreCount: Int { cpuSampler.efficiencyCoreCount }
 
@@ -70,6 +75,7 @@ final class SystemMonitor {
     @ObservationIgnored private var readMeter = RateMeter()
     @ObservationIgnored private var writeMeter = RateMeter()
     @ObservationIgnored private var netTop: NetTopStream?
+    @ObservationIgnored private var speedTest: SpeedTest?
     @ObservationIgnored private var samplingTask: Task<Void, Never>?
     @ObservationIgnored private var publicAddressTask: Task<Void, Never>?
     @ObservationIgnored private var publicAddressFetchedAt: Date?
@@ -108,6 +114,49 @@ final class SystemMonitor {
             hasTrafficSample = false
             owners.forgetProcesses()
         }
+    }
+
+    // MARK: Speed test
+
+    /// Keeps running if the panel closes, so the result is waiting when it reopens.
+    func startSpeedTest() {
+        guard speedTest == nil, network.connection != .offline else { return }
+        let test = SpeedTest()
+        let id = ObjectIdentifier(test)
+        speedTest = test
+        speedTestFailed = false
+        speedTestProgress = SpeedTestProgress()
+
+        test.start(
+            onProgress: { progress in
+                Task { @MainActor in
+                    guard self.isCurrentSpeedTest(id) else { return }
+                    self.speedTestProgress = progress
+                }
+            },
+            onFinish: { outcome in
+                Task { @MainActor in
+                    guard self.isCurrentSpeedTest(id) else { return }
+                    self.speedTest = nil
+                    self.speedTestProgress = nil
+                    switch outcome {
+                    case .finished(let result): self.speedTestResult = result
+                    case .failed: self.speedTestFailed = true
+                    }
+                }
+            }
+        )
+    }
+
+    /// Stops a running test; the previous result, if any, stays on screen.
+    func cancelSpeedTest() {
+        speedTest?.cancel()
+        speedTest = nil
+        speedTestProgress = nil
+    }
+
+    private func isCurrentSpeedTest(_ id: ObjectIdentifier) -> Bool {
+        speedTest.map { ObjectIdentifier($0) } == id
     }
 
     // MARK: Sampling
