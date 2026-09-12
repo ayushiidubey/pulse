@@ -1,86 +1,94 @@
 import AppKit
 import SwiftUI
 
-struct NetworkTile: View {
+struct NetworkModule: View {
     @Environment(SystemMonitor.self) private var monitor
     @State private var copiedAddress: String?
 
-    private static let appRowHeight: CGFloat = 20
+    private static let appRowHeight: CGFloat = 22
     private static let appRowCount = 3
 
     var body: some View {
         let network = monitor.network
         let peak = max(network.downHistory.peak, network.upHistory.peak, 50_000)
 
-        VStack(alignment: .leading, spacing: 8) {
-            TileHeader(title: Self.title(for: network), symbol: Self.symbol(for: network.connection), tint: .blue) {
+        VStack(alignment: .leading, spacing: 0) {
+            ModuleHeader(title: Self.title(for: network), symbol: Self.symbol(for: network.connection)) {
                 if let wifi = network.wifi {
                     HStack(spacing: 5) {
                         Image(systemName: "wifi", variableValue: wifi.signal)
                         Text([wifi.band, "\(Int(wifi.transmitRate)) Mbps"].compactMap { $0 }.joined(separator: " · "))
                             .monospacedDigit()
                     }
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .help("Signal \(wifi.rssi) dBm")
                 }
             }
+            .padding(.horizontal, Theme.modulePadding)
+            .padding(.top, Theme.modulePadding - 2)
 
-            HStack(spacing: 22) {
-                RateValue(symbol: "arrow.down", rate: network.down, tint: .blue)
-                RateValue(symbol: "arrow.up", rate: network.up, tint: .pink)
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                RateValue(symbol: "arrow.down", rate: network.down, tint: Theme.download)
+                RateValue(symbol: "arrow.up", rate: network.up, tint: Theme.upload)
                 Spacer(minLength: 0)
-            }
-
-            HistoryChart(
-                series: [
-                    .init(values: network.downHistory.values, color: .blue),
-                    .init(values: network.upHistory.values, color: .pink, isMirrored: true),
-                ],
-                scale: peak * 1.15
-            )
-            .frame(height: 50)
-            // Top leading: the newest samples, and so the most recent peaks, sit at the trailing edge.
-            .overlay(alignment: .topLeading) {
-                Text(Format.rate(peak))
-                    .font(.system(size: 9, weight: .medium))
+                Text("peak \(Format.rate(peak))")
+                    .font(.system(size: 10.5))
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
             }
+            .padding(.horizontal, Theme.modulePadding)
+            .padding(.top, 6)
 
-            HStack(spacing: 12) {
-                AddressField(title: "Local", address: network.localAddress, copiedAddress: $copiedAddress)
-                AddressField(title: "Public", address: network.publicAddress, copiedAddress: $copiedAddress)
-            }
+            FlowChart(
+                series: [
+                    .init(values: network.downHistory.values, color: Theme.download),
+                    .init(values: network.upHistory.values, color: Theme.upload, direction: -1),
+                ],
+                scale: peak * 1.1,
+                tick: monitor.sampleTick,
+                baselineFraction: 0.5
+            )
+            .frame(height: 60)
+            .padding(.top, 2)
 
-            SpeedTestRow()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    AddressField(title: "Local", address: network.localAddress, copiedAddress: $copiedAddress)
+                    AddressField(title: "Public", address: network.publicAddress, copiedAddress: $copiedAddress)
+                }
 
-            Divider()
-                .opacity(0.6)
+                SpeedTestRow()
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Top apps")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                ZStack(alignment: .top) {
-                    if monitor.topApps.isEmpty {
-                        Text(monitor.hasTrafficSample ? "No app is using the internet" : "Measuring…")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    VStack(spacing: 0) {
-                        ForEach(monitor.topApps) { app in
-                            AppTrafficRow(app: app, icon: monitor.owners.icon(for: app.owner))
-                                .frame(height: Self.appRowHeight)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Top apps")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                    ZStack(alignment: .top) {
+                        if monitor.topApps.isEmpty {
+                            Text(monitor.hasTrafficSample ? "No app is using the internet" : "Measuring…")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        let busiest = monitor.topApps.first?.total ?? 0
+                        VStack(spacing: 2) {
+                            ForEach(monitor.topApps) { app in
+                                AppTrafficRow(app: app, share: busiest > 0 ? app.total / busiest : 0, icon: monitor.owners.icon(for: app.owner))
+                                    .frame(height: Self.appRowHeight)
+                            }
                         }
                     }
+                    // Fixed height, so the panel doesn't resize as apps come and go.
+                    .frame(height: Self.appRowHeight * CGFloat(Self.appRowCount) + 4, alignment: .top)
                 }
-                // Fixed height, so the panel doesn't resize as apps come and go.
-                .frame(height: Self.appRowHeight * CGFloat(Self.appRowCount), alignment: .top)
             }
+            .padding(.horizontal, Theme.modulePadding)
+            .padding(.top, 8)
+            .padding(.bottom, Theme.modulePadding - 4)
         }
-        .glassTile()
+        .module()
         .task(id: copiedAddress) {
             guard copiedAddress != nil else { return }
             try? await Task.sleep(for: .seconds(1.2))
@@ -115,57 +123,59 @@ private struct SpeedTestRow: View {
     var body: some View {
         let isRunning = monitor.speedTestProgress != nil
 
-        HStack(spacing: 8) {
-            Button {
-                if isRunning {
-                    monitor.cancelSpeedTest()
-                } else {
-                    monitor.startSpeedTest()
+        Inset {
+            HStack(spacing: 8) {
+                Button {
+                    if isRunning {
+                        monitor.cancelSpeedTest()
+                    } else {
+                        monitor.startSpeedTest()
+                    }
+                } label: {
+                    if isRunning {
+                        Label("Stop", systemImage: "stop.fill")
+                    } else {
+                        Label(monitor.speedTestResult == nil ? "Speed Test" : "Test Again", systemImage: "gauge.with.needle")
+                    }
                 }
-            } label: {
-                if isRunning {
-                    Label("Stop", systemImage: "stop.fill")
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .disabled(monitor.network.connection == .offline)
+                .help("Measure download and upload speed with Apple's networkQuality")
+
+                Spacer(minLength: 4)
+
+                if let progress = monitor.speedTestProgress {
+                    ProgressView()
+                        .controlSize(.mini)
+                    SpeedFigure(symbol: "arrow.down", mbps: progress.downloadMbps, tint: Theme.download)
+                    SpeedFigure(symbol: "arrow.up", mbps: progress.uploadMbps, tint: Theme.upload)
+                } else if monitor.speedTestFailed {
+                    Text("Couldn't finish the test")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else if let result = monitor.speedTestResult {
+                    SpeedFigure(symbol: "arrow.down", mbps: result.downloadMbps, tint: Theme.download)
+                    SpeedFigure(symbol: "arrow.up", mbps: result.uploadMbps, tint: Theme.upload)
+                    if let rating = result.responsivenessRating {
+                        Chip(text: rating, color: Self.color(forRating: rating))
+                            .help(Self.details(for: result))
+                    }
                 } else {
-                    Label(monitor.speedTestResult == nil ? "Speed Test" : "Test Again", systemImage: "gauge.with.needle")
+                    Text("Tests against Apple's servers")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
                 }
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-            .disabled(monitor.network.connection == .offline)
-            .help("Measure download and upload speed with Apple's networkQuality")
-
-            Spacer(minLength: 4)
-
-            if let progress = monitor.speedTestProgress {
-                ProgressView()
-                    .controlSize(.mini)
-                SpeedFigure(symbol: "arrow.down", mbps: progress.downloadMbps, tint: .blue)
-                SpeedFigure(symbol: "arrow.up", mbps: progress.uploadMbps, tint: .pink)
-            } else if monitor.speedTestFailed {
-                Text("Couldn't finish the test")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            } else if let result = monitor.speedTestResult {
-                SpeedFigure(symbol: "arrow.down", mbps: result.downloadMbps, tint: .blue)
-                SpeedFigure(symbol: "arrow.up", mbps: result.uploadMbps, tint: .pink)
-                if let rating = result.responsivenessRating {
-                    Chip(text: rating, color: Self.color(forRating: rating))
-                        .help(Self.details(for: result))
-                }
-            } else {
-                Text("Tests against Apple's servers")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-            }
+            .frame(height: 24)
         }
-        .frame(height: 26)
     }
 
     private static func color(forRating rating: String) -> Color {
         switch rating.lowercased() {
         case "high": .green
         case "medium": .yellow
-        default: .orange
+        default: Theme.warning
         }
     }
 
@@ -189,11 +199,11 @@ private struct SpeedFigure: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(tint)
             Text(Format.megabits(mbps))
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .semibold))
                 .monospacedDigit()
                 .contentTransition(.numericText(value: mbps))
             Text("Mbps")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
         }
         .animation(.snappy(duration: 0.25), value: mbps)
@@ -212,7 +222,7 @@ private struct RateValue: View {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(tint)
-            BigValue(value: quantity.value, unit: quantity.unit + "/s", size: 20, numeric: rate)
+            BigValue(value: quantity.value, unit: quantity.unit + "/s", size: 22, numeric: rate)
         }
     }
 }
@@ -223,32 +233,33 @@ private struct AddressField: View {
     @Binding var copiedAddress: String?
 
     var body: some View {
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                Text(address ?? "—")
-                    .font(.system(size: 12, weight: .medium))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 4)
-            if let address {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(address, forType: .string)
-                    copiedAddress = address
-                } label: {
-                    Image(systemName: copiedAddress == address ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .semibold))
-                        .contentTransition(.symbolEffect(.replace))
+        Inset {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text(address ?? "—")
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(.small)
-                .help("Copy \(title.lowercased()) IP address")
+                Spacer(minLength: 4)
+                if let address {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(address, forType: .string)
+                        copiedAddress = address
+                    } label: {
+                        Image(systemName: copiedAddress == address ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 10, weight: .semibold))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Copy \(title.lowercased()) IP address")
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -257,6 +268,8 @@ private struct AddressField: View {
 
 private struct AppTrafficRow: View {
     let app: AppTraffic
+    /// This app's traffic relative to the busiest app, for the bar behind the row.
+    let share: Double
     let icon: NSImage?
 
     var body: some View {
@@ -270,7 +283,7 @@ private struct AppTrafficRow: View {
                         .font(.system(size: 8))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.primary.opacity(0.08), in: .rect(cornerRadius: 4))
+                        .background(.fill.secondary, in: .rect(cornerRadius: 4))
                 }
             }
             .frame(width: 16, height: 16)
@@ -279,8 +292,16 @@ private struct AppTrafficRow: View {
                 .font(.system(size: 12))
                 .lineLimit(1)
             Spacer(minLength: 6)
-            RateLabel(symbol: "arrow.down", rate: app.down, tint: .blue)
-            RateLabel(symbol: "arrow.up", rate: app.up, tint: .pink)
+            RateLabel(symbol: "arrow.down", rate: app.down, tint: Theme.download)
+            RateLabel(symbol: "arrow.up", rate: app.up, tint: Theme.upload)
+        }
+        .padding(.horizontal, 6)
+        .background(alignment: .leading) {
+            GeometryReader { proxy in
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Theme.accent.opacity(0.14))
+                    .frame(width: max(proxy.size.width * CGFloat(share), 24))
+            }
         }
     }
 }

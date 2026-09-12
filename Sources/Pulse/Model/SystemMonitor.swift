@@ -54,6 +54,8 @@ final class SystemMonitor {
     /// False until the first per-app sample arrives, so the UI can say "measuring" rather than "idle".
     private(set) var hasTrafficSample = false
     private(set) var isPanelVisible = false
+    /// Increments once per sample; charts use it to slide along by one step.
+    private(set) var sampleTick = 0
 
     /// Live figures while a speed test runs; nil otherwise.
     private(set) var speedTestProgress: SpeedTestProgress?
@@ -184,6 +186,7 @@ final class SystemMonitor {
         network.downHistory.append(network.down)
         network.upHistory.append(network.up)
         self.network = network
+        sampleTick &+= 1
 
         if isPanelVisible {
             sampleDetails(at: now, includeSlowReadings: tick % 5 == 0)

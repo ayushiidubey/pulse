@@ -1,22 +1,23 @@
 import SwiftUI
 
-struct BatteryTile: View {
+struct BatteryModule: View {
     @Environment(SystemMonitor.self) private var monitor
 
     var body: some View {
         if let battery = monitor.battery {
-            let tint = Self.tint(for: battery)
+            let color = Self.color(for: battery)
 
-            HStack(spacing: 12) {
-                RingGauge(value: battery.level, tint: tint) {
+            HStack(spacing: 14) {
+                RingGauge(value: battery.level, color: color, lineWidth: 4) {
                     Image(systemName: Self.symbol(for: battery.state))
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(tint)
+                        .foregroundStyle(color)
+                        .symbolEffect(.pulse, isActive: battery.state == .charging)
                 }
-                .frame(width: 44, height: 44)
+                .frame(width: 46, height: 46)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    BigValue(value: Format.percent(battery.level), unit: "%", size: 22, numeric: battery.level)
+                    BigValue(value: Format.percent(battery.level), unit: "%", size: 26, numeric: battery.level)
                     Text(Self.status(for: battery))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -25,44 +26,45 @@ struct BatteryTile: View {
 
                 Spacer(minLength: 8)
 
-                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
                     GridRow {
                         MiniStat(title: "Health", value: battery.health.map { Format.percent($0) + "%" })
                         MiniStat(title: "Cycles", value: battery.cycleCount.map { "\($0)" })
                     }
                     GridRow {
-                        MiniStat(title: "Temp", value: battery.temperature.map { String(format: "%.0f°C", $0) })
+                        MiniStat(title: "Temp", value: battery.temperature.map { String(format: "%.0f°", $0) })
                         MiniStat(title: "Power", value: battery.watts.map { String(format: "%.1f W", abs($0)) })
                     }
                 }
                 .fixedSize()
             }
-            .glassTile()
+            .padding(Theme.modulePadding)
+            .module()
         }
     }
 
     private static func status(for battery: BatteryReading) -> String {
         let remaining = battery.minutesRemaining.map { Format.clock(minutes: $0) }
         switch battery.state {
-        case .charging: return remaining.map { "Charging · \($0) to full" } ?? "Charging"
+        case .charging: return remaining.map { "\($0) to full" } ?? "Charging"
         case .charged: return "Fully charged"
-        case .pluggedIn: return "Plugged in, not charging"
-        case .discharging: return remaining.map { "On battery · \($0) left" } ?? "On battery"
+        case .pluggedIn: return "Plugged in"
+        case .discharging: return remaining.map { "\($0) left" } ?? "On battery"
         }
     }
 
-    private static func tint(for battery: BatteryReading) -> Color {
-        if battery.state == .charging || battery.state == .charged { return .green }
-        if battery.level <= 0.1 { return .red }
-        if battery.level <= 0.2 { return .orange }
-        return .green
+    private static func color(for battery: BatteryReading) -> Color {
+        if battery.state == .charging || battery.state == .charged { return Theme.battery }
+        if battery.level <= 0.1 { return Theme.critical }
+        if battery.level <= 0.2 { return Theme.warning }
+        return Theme.battery
     }
 
     private static func symbol(for state: BatteryReading.State) -> String {
         switch state {
         case .charging: "bolt.fill"
         case .charged, .pluggedIn: "powerplug.fill"
-        case .discharging: "leaf.fill"
+        case .discharging: "battery.75percent"
         }
     }
 }
@@ -76,7 +78,6 @@ private struct MiniStat: View {
             Text(title)
                 .foregroundStyle(.tertiary)
             Text(value ?? "—")
-                .fontWeight(.medium)
                 .monospacedDigit()
         }
         .font(.system(size: 11))
