@@ -3,11 +3,10 @@ import SwiftUI
 
 struct HeaderBar: View {
     @Environment(SystemMonitor.self) private var monitor
-    @Environment(Preferences.self) private var preferences
 
     var body: some View {
         HStack(spacing: 12) {
-            HeartbeatTrace(load: monitor.cpu.reading.total)
+            HeartbeatTrace()
                 .frame(width: 76, height: 28)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -28,19 +27,33 @@ struct HeaderBar: View {
             }
             .help("Open Activity Monitor")
 
-            Menu {
-                menuContent
-            } label: {
-                Image(systemName: "ellipsis")
-            }
-            .menuIndicator(.hidden)
-            .help("Options")
+            OptionsMenu()
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
         .padding(.horizontal, Theme.modulePadding)
         .padding(.vertical, 10)
         .module()
+    }
+
+    private func openActivityMonitor() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
+    }
+}
+
+/// Kept apart from anything sampled live: each update rebuilds the menu's items, which closes an open submenu.
+private struct OptionsMenu: View {
+    @Environment(SystemMonitor.self) private var monitor
+    @Environment(Preferences.self) private var preferences
+
+    var body: some View {
+        Menu {
+            menuContent
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .menuIndicator(.hidden)
+        .help("Options")
     }
 
     @ViewBuilder
@@ -58,10 +71,6 @@ struct HeaderBar: View {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q")
-    }
-
-    private func openActivityMonitor() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
     }
 }
 
@@ -103,11 +112,12 @@ final class HeartbeatModel {
 
 /// A live ECG whose rate follows CPU load: resting when the Mac is idle, racing under load.
 struct HeartbeatTrace: View {
-    let load: Double
-
+    @Environment(SystemMonitor.self) private var monitor
     @State private var model = HeartbeatModel()
 
     var body: some View {
+        // Read here rather than passed in, so each sample invalidates only the trace and not the header's menu.
+        let load = monitor.cpu.reading.total
         TimelineView(.animation(paused: !DebugFlags.ecgMotion)) { context in
             Canvas { graphics, size in
                 model.step(load: load, at: context.date.timeIntervalSinceReferenceDate)
